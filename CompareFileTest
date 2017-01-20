@@ -1,0 +1,44 @@
+import java.io.BufferedReader;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.List;
+
+
+public class CompareFileTest {
+	public static void main(String[] args) throws IOException {
+		InputStream in=new FileInputStream("D:/text1.txt");
+		BufferedReader br=new BufferedReader(new InputStreamReader(in));
+		List<String> text1=new ArrayList<String>();
+		InputStream in1=new FileInputStream("D:/text2.txt");
+		BufferedReader br1=new BufferedReader(new InputStreamReader(in1));
+		List<String> text2=new ArrayList<String>();
+		String line1="";
+		String line="";
+		while((line=br.readLine()) != null){
+			text1.add(line);
+		}
+		while((line1=br1.readLine()) != null){
+			text2.add(line1);
+		}
+		List<String> text3=new ArrayList<String>();
+		List<String> text4=new ArrayList<String>();
+		for(String s:text1){
+			if(!text2.contains(s)){
+				text3.add(s);
+			}
+		}
+		
+		System.out.println(text3.size());
+		System.out.println(text3.toString());
+		for(String s:text2){
+			if(!text1.contains(s)){
+				text4.add(s);
+			}
+		}
+		System.out.println(text4.size());
+		System.out.println(text4.toString());
+	}
+}
