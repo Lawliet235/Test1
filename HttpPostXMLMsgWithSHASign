@@ -1,0 +1,217 @@
+package com.shfft.hydra.biz;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.StringReader;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+import org.apache.commons.httpclient.HttpClient;
+import org.apache.commons.httpclient.HttpConnectionManager;
+import org.apache.commons.httpclient.HttpException;
+import org.apache.commons.httpclient.HttpMethod;
+import org.apache.commons.httpclient.SimpleHttpConnectionManager;
+import org.apache.commons.httpclient.methods.PostMethod;
+import org.apache.commons.httpclient.methods.RequestEntity;
+import org.apache.commons.httpclient.methods.StringRequestEntity;
+import org.apache.commons.httpclient.params.HttpClientParams;
+import org.apache.commons.httpclient.params.HttpConnectionManagerParams;
+import org.apache.commons.lang.StringUtils;
+import org.jdom2.Document;
+import org.jdom2.Element;
+import org.jdom2.JDOMException;
+import org.jdom2.input.SAXBuilder;
+import org.jdom2.output.Format;
+import org.jdom2.output.XMLOutputter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.xml.sax.InputSource;
+
+
+public class HttpPostXMLMsgWithSHASign {
+	
+	public static final String DIRECT_URL = "fft.westernUnion.redirectUrl";
+	public static final String MERID = "fft.westernUnion.merId";
+	public static final String SIGN_KEY = "fft.westernUnion.signKey";
+	private static Logger log = LoggerFactory.getLogger(HttpPostXMLMsg.class);
+	
+	public String postMsg() {
+		// String url="https://prepay.chinapay.com/";// 生产地址
+		
+		String token="";
+		String unionUserId="";
+		try {
+			HttpClient client = new HttpClient(new HttpClientParams(),new SimpleHttpConnectionManager(true));
+			HttpConnectionManager httpConnectionManager=new SimpleHttpConnectionManager();
+			HttpConnectionManagerParams httpConnectionManagerParams=new HttpConnectionManagerParams();
+			httpConnectionManagerParams.setConnectionTimeout(30000);
+			httpConnectionManagerParams.setSoTimeout(50000);
+			httpConnectionManager.setParams(httpConnectionManagerParams);
+			client.setHttpConnectionManager(httpConnectionManager);
+			HttpMethod method = getPostMethod(phone,unionUserId);// 使用POST方式提交数据
+			method.addRequestHeader("Content-Type", "text/xml;charset=utf-8");
+			method.releaseConnection();
+			client.executeMethod(method);
+			log.info("响应码："+method.getStatusCode());
+			String urlResp = new String(method.getResponseBodyAsString().getBytes("iso-8859-1"));
+			String response=URLDecoder.decode(urlResp);
+			log.info("response:"+response);
+			if (StringUtils.isEmpty(response)) {
+				throw new Exception( "访问银联失败！");
+			}
+			Document doc = string2Doc(response);
+			token=doc.getRootElement().getChild("token").getText();
+		} catch (HttpException e) {
+			log.error("http request error ...",e);
+		} catch (IOException e) {
+			log.error("http request io error...",e);
+		}catch(Exception e){
+			log.error("error",e);
+		}
+		
+		return token;
+	}
+
+
+	private HttpMethod getPostMethod(String phone,String unionUserId) throws UnsupportedEncodingException {
+		String url="https://prepay.chinapay.com/";// 测试地址
+		String action = url+"/user/queryToken.action";
+		String merId=MERID;
+		String signKey=SIGN_KEY;
+		PostMethod post = new PostMethod(action);
+		Document doc =new Document();
+		Element remitElement=new Element("remit");
+		doc.setRootElement(remitElement);
+		Element applicationElement=new Element("application");
+		applicationElement.setText("register.req");
+		Element versionElement=new Element("version");
+		versionElement.setText("1.0.0");
+		Element merIdElement=new Element("merId");
+		merIdElement.setText(merId);
+		Element userIdElement=new Element("userId");
+		userIdElement.setText(unionUserId);
+		Element phoneNoElement=new Element("phoneNo");
+		phoneNoElement.setText(phone);
+		Element nickNameElement=new Element("nickName");
+		nickNameElement.setText("");
+		Element emailElement=new Element("email");
+		emailElement.setText("");
+		
+		remitElement.addContent(applicationElement);
+		remitElement.addContent(versionElement);
+		remitElement.addContent(merIdElement);
+		remitElement.addContent(userIdElement);
+		remitElement.addContent(phoneNoElement);		
+		remitElement.addContent(nickNameElement);		
+		remitElement.addContent(emailElement);		
+
+		Element signElement=new Element("sign");
+		List<String> valList=new ArrayList<String>();
+		valList.add("application");
+		valList.add("version");
+		valList.add("merId");
+		valList.add("userId");
+		valList.add("phoneNo");
+		valList.add("nickName");
+		valList.add("email");
+		Collections.sort(valList);
+		
+		StringBuilder signStr=new StringBuilder();
+		for(String s:valList){
+			signStr.append(s);
+			signStr.append("=");
+			signStr.append(remitElement.getChildText(s));
+			signStr.append("&");
+		}
+		String signFinal=signStr.toString().substring(0, signStr.toString().lastIndexOf("&"));
+		String sign= SHA(signFinal+signKey, "SHA-256"); 
+		signElement.setText(sign);
+		remitElement.addContent(signElement);
+		RequestEntity entity=new StringRequestEntity(doc2String(doc), "text/xml", "iso-8859-1");
+		post.setRequestEntity(entity);
+		return post;
+
+	}
+
+	public Document string2Doc(String xml)  {
+		log.info("string2Doc start");
+		StringReader sr = new StringReader(xml);
+		InputSource is = new InputSource(sr);
+		Document doc=null;
+		try {
+			doc = (new SAXBuilder()).build(is);
+		} catch (JDOMException e) {
+			log.error("jdom error...");
+		} catch (IOException e) {
+			log.error("jdom io error...");
+		}
+		if(doc==null){
+			throw new BusinessException(RespCode.RESP_9999,"响应内容格式错误");
+		}
+		log.info("string2Doc end");
+		return doc;
+	}
+
+	public String doc2String(Document doc)  {
+		// XML转字符串
+		log.info("doc2String start");
+		Format format = Format.getPrettyFormat();
+		format.setEncoding("gb2312");// 配置xml文档的字符为gb2312，解决中文问题
+		XMLOutputter xmlout = new XMLOutputter(format);
+		ByteArrayOutputStream bo = new ByteArrayOutputStream();
+		try {
+			xmlout.output(doc, bo);
+		} catch (IOException e) {
+			log.error("xml output error...");
+		}
+		String xmlStr1 = bo.toString();
+		log.info("doc2String end:"+xmlStr1);
+		return xmlStr1;
+
+	}
+	
+	  private String SHA(final String strText, final String strType)  
+	  {  
+	    // 返回值  
+		  log.info("sha 加密前："+strText);
+	    String strResult = null;  
+	  
+	    if (strText != null && strText.length() > 0)  
+	    {  
+	      try  
+	      {  
+	        // SHA 加密开始  
+	        MessageDigest messageDigest = MessageDigest.getInstance(strType);  
+	        messageDigest.update(strText.getBytes());  
+	        byte byteBuffer[] = messageDigest.digest();  
+	  
+	        StringBuffer strHexString = new StringBuffer();  
+	        for (int i = 0; i < byteBuffer.length; i++)  
+	        {  
+	          String hex = Integer.toHexString(0xff & byteBuffer[i]);  
+	          if (hex.length() == 1)  
+	          {  
+	            strHexString.append('0');  
+	          }  
+	          strHexString.append(hex);  
+	        }  
+	        // 得到返回結果  
+	        strResult = strHexString.toString();  
+	      }  
+	      catch (NoSuchAlgorithmException e)  
+	      {  
+	        e.printStackTrace();  
+	      }  
+	    }  
+	  
+	    return strResult;  
+	  } 
+
+}
